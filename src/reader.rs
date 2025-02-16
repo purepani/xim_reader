@@ -1,28 +1,26 @@
-use ndarray::ShapeBuilder;
 use numpy::PyArray2;
 use numpy::PyArrayMethods;
 use pyo3::{prelude::Bound, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::{
-    cell::RefCell,
     convert::TryInto,
     fmt::Display,
     fs::File,
     io::{BufReader, Read},
     path::PathBuf,
-    str::Utf8Error,
     string::FromUtf8Error,
 };
 
-use itertools::Itertools;
 use ndarray::{ArrayViewMut2, ShapeError};
 
+#[gen_stub_pyclass]
 #[pyclass]
 pub struct XIMImage {
     header: XIMHeader,
     pixel_data: PixelData,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl XIMImage {
     #[new]
@@ -75,7 +73,6 @@ impl PixelData {
         if pixel_buffer_size < 0 {
             return Err(Error::InvalidPixelBufferSize);
         }
-        //let pixel_buffer_size = pixel_buffer_size.unsigned_abs();
         let mut data: Vec<i16> = Vec::with_capacity(width * height);
         for _i in 0..(width * height) {
             let mut buf = [0u8; 2];
@@ -87,7 +84,6 @@ impl PixelData {
         Ok(Self(array))
     }
     pub fn parse_lookup(lookup_table: Vec<u8>) -> Vec<u8> {
-        //let mut lookup_table: Vec<u8> = Vec::with_capacity(lookup_table_size.try_into().unwrap());
         let num_bytes_table = lookup_table
             .into_iter()
             .flat_map(|vals| {
@@ -137,9 +133,9 @@ impl PixelData {
             .into_iter()
             .take(full_len - (width * (height - 1)) % 4 - 1);
 
-        let mut compressed_pixel_buffer = {
+        let compressed_pixel_buffer = {
             let mut buf = vec![0; compressed_pixel_buffer_size.try_into().unwrap()];
-            reader.read_exact(&mut buf);
+            let _ = reader.read_exact(&mut buf);
             buf.into_iter()
         }
         .collect::<Vec<_>>();
@@ -196,14 +192,8 @@ impl PixelData {
     }
 
     pub fn decompress_diffs(mut compressed_arr: ArrayViewMut2<i16>) -> ArrayViewMut2<i16> {
-        let (height, width) = (compressed_arr.shape()[0], compressed_arr.shape()[1]);
-        let num_elms = compressed_arr.len();
+        let width = compressed_arr.ncols();
 
-        let indexes = compressed_arr
-            .indexed_iter()
-            .map(|(ind, _)| ind)
-            .collect::<Vec<_>>()
-            .into_iter();
         let arr = compressed_arr.as_slice_mut().unwrap();
 
         let first_index = width + 1;
@@ -211,35 +201,10 @@ impl PixelData {
             let left = *arr.get(i - 1).unwrap();
             let above = *arr.get(i - width).unwrap();
             let upper_left = *arr.get(i - width - 1).unwrap();
-            let mut diff = arr.get_mut(i).unwrap();
+            let diff = arr.get_mut(i).unwrap();
             *diff = diff.wrapping_add(left);
             *diff = diff.wrapping_add(above);
             *diff = diff.wrapping_sub(upper_left);
-            //let left = *compressed_arr
-            //.get((
-            //r - (if (c == 0) { 1 } else { 0 }),
-            //))
-            ////.unwrap();
-            //let above = *compressed_arr.get((r - 1, c)).unwrap();
-            //let upper_left = *compressed_arr
-            //.get((
-            //        r - (if (c == 0) { 2 } else { 1 }),
-            //(if c == 0 { col_len - 1 } else { c - 1 }),
-            //))
-            //.unwrap();
-            ////let diff = compressed_arr.get_mut((r, c)).unwrap();
-            //*diff = diff.wrapping_add(left);
-            //*diff = diff.wrapping_add(above);
-            //*diff = diff.wrapping_sub(upper_left);
-            //let left = *compressed_arr.get(idx - 1).unwrap();
-            //let above = *compressed_arr.get(idx - img_width).unwrap();
-            //let upper_left = *compressed_arr.get(idx - img_width - 1).unwrap();
-            //
-            //let diff = compressed_arr.get_mut(idx).unwrap();
-            //
-            //*diff = diff.wrapping_add(left);
-            //*diff = diff.wrapping_add(above);
-            //*diff = diff.wrapping_sub(upper_left);
         }
         compressed_arr
     }
