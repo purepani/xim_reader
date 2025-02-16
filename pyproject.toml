@@ -11,6 +11,11 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dynamic = ["version"]
+dependencies = [
+    "matplotlib>=3.10.0",
+    "numpy>=2.2.3",
+    "pip>=25.0.1",
+    "pylinac>=3.23.2",
+]
 [tool.maturin]
 features = ["pyo3/extension-module"]

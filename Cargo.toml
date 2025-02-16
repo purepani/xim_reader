@@ -3,10 +3,16 @@ name = "xim_reader"
 version = "0.1.0"
 edition = "2021"
 
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "xim_reader"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.22.0"
+itertools = "0.14.0"
+ndarray = "0.16.1"
+numpy = "0.23.0"
+pyo3 = {version="0.23.4", features=["abi3-py38"]}
+pyo3-stub-gen = "0.7.0"
+
