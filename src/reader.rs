@@ -19,6 +19,7 @@ pub struct XIMImage {
     header: XIMHeader,
     pixel_data: PixelData,
     histogram: XIMHistogram,
+    properties: XIMProperties,
 }
 
 #[gen_stub_pymethods]
@@ -29,12 +30,18 @@ impl XIMImage {
         let file = File::open(image_path).unwrap();
         let mut reader = BufReader::new(file);
         let header = XIMHeader::from_reader(&mut reader).unwrap();
-        let pixel_data = PixelData::from_compressed(&mut reader, header.clone()).unwrap();
+        let pixel_data = if header.is_compressed {
+            PixelData::from_compressed(&mut reader, header.clone()).unwrap()
+        } else {
+            PixelData::from_uncompressed(&mut reader, header.clone()).unwrap()
+        };
         let histogram = XIMHistogram::from_reader(&mut reader).unwrap();
+        let properties = XIMProperties::from_reader(&mut reader).unwrap();
         Self {
             header,
             pixel_data,
             histogram,
+            properties,
         }
     }
 
@@ -66,6 +73,38 @@ pub struct PixelData(ndarray::Array2<i16>);
 pub struct XIMHistogram {
     pub number_of_bins: i32,
     pub histogram: Vec<i32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PropertyType {
+    Integer,
+    Double,
+    String,
+    DoubleArray,
+    IntegerArray,
+}
+
+#[derive(Debug, Clone)]
+pub enum PropertyValue {
+    Integer(i32),
+    Double(f64),
+    String(String),
+    DoubleArray(Vec<f64>),
+    IntegerArray(Vec<i32>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Property {
+    pub property_name_length: i32,
+    pub property_name: String,
+    pub property_type: PropertyType,
+    pub property_value: PropertyValue,
+}
+
+#[derive(Debug, Clone)]
+pub struct XIMProperties {
+    pub num_properties: i32,
+    pub properties: Vec<Property>,
 }
 
 impl XIMHeader {
@@ -242,6 +281,9 @@ impl PixelData {
             ndarray::Array2::from_shape_vec((height, width), uncompressed_data).unwrap();
         Self::decompress_diffs(array.view_mut());
 
+        let mut buf = [0u8; 4];
+        let _ = reader.read_exact(&mut buf);
+
         Ok(Self(array))
     }
 
@@ -270,11 +312,18 @@ pub enum Error {
     InvalidWidth,
     InvalidHeight,
     InvalidPixelBufferSize,
+    InvalidOther(String),
 }
 impl core::error::Error for Error {}
 impl Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match self {
+            Error::InvalidCompressionIndicator => todo!(),
+            Error::InvalidWidth => todo!(),
+            Error::InvalidHeight => todo!(),
+            Error::InvalidPixelBufferSize => todo!(),
+            Error::InvalidOther(val) => write!(f, "Failed: {}", val),
+        }
     }
 }
 
@@ -286,7 +335,7 @@ impl From<ShapeError> for Error {
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        todo!()
+        Self::InvalidOther(value.to_string())
     }
 }
 
@@ -318,6 +367,115 @@ impl XIMHistogram {
         Ok(Self {
             number_of_bins,
             histogram,
+        })
+    }
+}
+
+impl Property {
+    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
+        let mut property_name_length = [0u8; 4];
+        reader.read_exact(&mut property_name_length)?;
+        let property_name_length = i32::from_le_bytes(property_name_length);
+
+        let mut property_name = vec![0u8; property_name_length.try_into().unwrap()];
+        reader.read_exact(&mut property_name)?;
+        let property_name = String::from_utf8(property_name)?;
+
+        let mut property_type = [0u8; 4];
+        reader.read_exact(&mut property_type)?;
+        let property_type = i32::from_le_bytes(property_type);
+        let property_type = match property_type {
+            0 => PropertyType::Integer,
+            1 => PropertyType::Double,
+            2 => PropertyType::String,
+            4 => PropertyType::DoubleArray,
+            5 => PropertyType::IntegerArray,
+            _ => todo!(),
+        };
+
+        let property_value = match property_type {
+            PropertyType::Integer => {
+                let mut value = [0u8; 4];
+                reader.read_exact(&mut value)?;
+                let value = i32::from_le_bytes(value);
+                PropertyValue::Integer(value)
+            }
+            PropertyType::Double => {
+                let mut value = [0u8; 8];
+                reader.read_exact(&mut value)?;
+                let value = f64::from_le_bytes(value);
+                PropertyValue::Double(value)
+            }
+            PropertyType::String => {
+                let mut value_len = [0u8; 4];
+                reader.read_exact(&mut value_len)?;
+                let value_len = i32::from_le_bytes(value_len);
+
+                let mut value = vec![0u8; value_len.try_into().unwrap()];
+                reader.read_exact(&mut value)?;
+                let value = String::from_utf8(value).unwrap();
+                PropertyValue::String(value)
+            }
+            PropertyType::DoubleArray => {
+                let mut value_len = [0u8; 4];
+                reader.read_exact(&mut value_len)?;
+                let value_len = i32::from_le_bytes(value_len);
+
+                let mut value = vec![0u8; value_len.try_into().unwrap()];
+                reader.read_exact(&mut value)?;
+                let value = value
+                    .chunks_exact(8)
+                    .map(|val| {
+                        let mut buf = [0u8; 8];
+                        buf.copy_from_slice(val);
+                        f64::from_le_bytes(buf)
+                    })
+                    .collect::<Vec<_>>();
+                PropertyValue::DoubleArray(value)
+            }
+            PropertyType::IntegerArray => {
+                let mut value_len = [0u8; 4];
+                reader.read_exact(&mut value_len)?;
+                let value_len = i32::from_le_bytes(value_len);
+
+                let mut value = vec![0u8; value_len.try_into().unwrap()];
+                reader.read_exact(&mut value)?;
+                let value = value
+                    .chunks_exact(4)
+                    .map(|val| {
+                        let mut buf = [0u8; 4];
+                        buf.copy_from_slice(val);
+                        i32::from_le_bytes(buf)
+                    })
+                    .collect::<Vec<_>>();
+                PropertyValue::IntegerArray(value)
+            }
+        };
+
+        Ok(Self {
+            property_name_length,
+            property_name,
+            property_type,
+            property_value,
+        })
+    }
+}
+
+impl XIMProperties {
+    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
+        let mut num_properties = [0u8; 4];
+        reader.read_exact(&mut num_properties).unwrap();
+        let num_properties = i32::from_le_bytes(num_properties);
+
+        let mut properties = Vec::with_capacity(num_properties.try_into().unwrap());
+
+        for i in 0..num_properties {
+            let property = Property::from_reader(reader).unwrap();
+            properties.push(property)
+        }
+        Ok(Self {
+            num_properties,
+            properties,
         })
     }
 }
