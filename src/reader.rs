@@ -18,6 +18,7 @@ use ndarray::{ArrayViewMut2, ShapeError};
 pub struct XIMImage {
     header: XIMHeader,
     pixel_data: PixelData,
+    histogram: XIMHistogram,
 }
 
 #[gen_stub_pymethods]
@@ -29,7 +30,12 @@ impl XIMImage {
         let mut reader = BufReader::new(file);
         let header = XIMHeader::from_reader(&mut reader).unwrap();
         let pixel_data = PixelData::from_compressed(&mut reader, header.clone()).unwrap();
-        Self { header, pixel_data }
+        let histogram = XIMHistogram::from_reader(&mut reader).unwrap();
+        Self {
+            header,
+            pixel_data,
+            histogram,
+        }
     }
 
     pub fn numpy<'py>(this: Bound<'py, Self>) -> Bound<'py, PyArray2<i16>> {
@@ -53,7 +59,55 @@ pub struct XIMHeader {
     pub is_compressed: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct PixelData(ndarray::Array2<i16>);
+
+#[derive(Debug, Clone)]
+pub struct XIMHistogram {
+    pub number_of_bins: i32,
+    pub histogram: Vec<i32>,
+}
+
+impl XIMHeader {
+    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
+        let mut identifier = [0u8; 8];
+        let mut version = [0u8; 4];
+        let mut width = [0u8; 4];
+        let mut height = [0u8; 4];
+        let mut bits_per_pixel = [0u8; 4];
+        let mut bytes_per_pixel = [0u8; 4];
+        let mut compression = [0u8; 4];
+
+        reader.read_exact(&mut identifier)?;
+        reader.read_exact(&mut version)?;
+        reader.read_exact(&mut width)?;
+        reader.read_exact(&mut height)?;
+        reader.read_exact(&mut bits_per_pixel)?;
+        reader.read_exact(&mut bytes_per_pixel)?;
+        reader.read_exact(&mut compression)?;
+
+        let identifier = String::from_utf8(identifier.to_vec())?;
+        let version = i32::from_le_bytes(version);
+        let width = i32::from_le_bytes(width);
+        let height = i32::from_le_bytes(height);
+        let bits_per_pixel = i32::from_le_bytes(bits_per_pixel);
+        let bytes_per_pixel = i32::from_le_bytes(bytes_per_pixel);
+        let is_compressed = match i32::from_le_bytes(compression) {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::InvalidCompressionIndicator),
+        }?;
+        Ok(Self {
+            identifier,
+            version,
+            width,
+            height,
+            bits_per_pixel,
+            bytes_per_pixel,
+            is_compressed,
+        })
+    }
+}
 
 impl PixelData {
     pub fn from_uncompressed(mut reader: impl Read, header: XIMHeader) -> Result<Self, Error> {
@@ -242,43 +296,28 @@ impl From<FromUtf8Error> for Error {
     }
 }
 
-impl XIMHeader {
+impl XIMHistogram {
     pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
-        let mut identifier = [0u8; 8];
-        let mut version = [0u8; 4];
-        let mut width = [0u8; 4];
-        let mut height = [0u8; 4];
-        let mut bits_per_pixel = [0u8; 4];
-        let mut bytes_per_pixel = [0u8; 4];
-        let mut compression = [0u8; 4];
+        let mut number_of_bins = [0u8; 4];
 
-        reader.read_exact(&mut identifier)?;
-        reader.read_exact(&mut version)?;
-        reader.read_exact(&mut width)?;
-        reader.read_exact(&mut height)?;
-        reader.read_exact(&mut bits_per_pixel)?;
-        reader.read_exact(&mut bytes_per_pixel)?;
-        reader.read_exact(&mut compression)?;
+        reader.read_exact(&mut number_of_bins)?;
+        let number_of_bins = i32::from_le_bytes(number_of_bins);
 
-        let identifier = String::from_utf8(identifier.to_vec())?;
-        let version = i32::from_le_bytes(version);
-        let width = i32::from_le_bytes(width);
-        let height = i32::from_le_bytes(height);
-        let bits_per_pixel = i32::from_le_bytes(bits_per_pixel);
-        let bytes_per_pixel = i32::from_le_bytes(bytes_per_pixel);
-        let is_compressed = match i32::from_le_bytes(compression) {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(Error::InvalidCompressionIndicator),
-        }?;
+        let mut histogram = vec![0u8; (number_of_bins * 4).try_into().unwrap()];
+        reader.read_exact(&mut histogram);
+
+        let histogram = histogram
+            .chunks_exact(4)
+            .into_iter()
+            .map(|val| {
+                let mut buf = [0u8; 4];
+                buf.copy_from_slice(val);
+                i32::from_le_bytes(buf)
+            })
+            .collect::<Vec<_>>();
         Ok(Self {
-            identifier,
-            version,
-            width,
-            height,
-            bits_per_pixel,
-            bytes_per_pixel,
-            is_compressed,
+            number_of_bins,
+            histogram,
         })
     }
 }
