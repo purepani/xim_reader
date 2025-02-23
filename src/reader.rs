@@ -1,7 +1,7 @@
 use byteorder::ByteOrder;
 
 use binrw::{
-    BinRead, BinWrite, binrw,
+    BinRead, BinWrite, binread, binrw,
     io::{BufReader, Read, Seek},
 };
 
@@ -168,19 +168,14 @@ pub struct XIMHeader {
     #[br(little, try_map=|x: [u8; 8]| String::from_utf8(x.to_vec()))]
     pub identifier: String,
     #[pyo3(get)]
-    #[br(little)]
     pub version: i32,
     #[pyo3(get)]
-    #[br(little)]
     pub width: i32,
     #[pyo3(get)]
-    #[br(little)]
     pub height: i32,
     #[pyo3(get)]
-    #[br(little)]
     pub bits_per_pixel: i32,
     #[pyo3(get)]
-    #[br(little)]
     pub bytes_per_pixel: i32,
     #[br(little, try_map=|x: i32| match x {
         0=>Ok(false),
@@ -201,49 +196,76 @@ pub enum PixelDataSupported {
     Int64(PixelData<i64>),
 }
 
+#[binread]
 #[derive(Debug, Clone)]
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct XIMHistogram {
+    #[br(temp)]
+    bins: i32,
+    #[br(count=bins)]
     #[pyo3(get)]
     pub histogram: Vec<i32>,
 }
 
-#[derive(Debug, Clone)]
-enum PropertyType {
-    Integer,
-    Double,
-    String,
-    DoubleArray,
-    IntegerArray,
-}
-
+#[binread]
+#[br(little)]
 #[derive(Debug, Clone, IntoPyObject)]
 pub enum PropertyValue {
+    #[br(magic = 0i32)]
     #[pyo3(transparent)]
     Integer(i32),
+    #[br(magic = 1i32)]
     #[pyo3(transparent)]
     Double(f64),
+    #[br(magic = 2i32)]
     #[pyo3(transparent)]
-    String(String),
+    String {
+        #[br(temp)]
+        len: i32,
+        #[br(little, count=len, try_map=|x: Vec<u8>| String::from_utf8(x))]
+        val: String,
+    },
+    #[br(magic = 4i32)]
     #[pyo3(transparent)]
-    DoubleArray(Vec<f64>),
+    DoubleArray {
+        #[br(temp)]
+        len: i32,
+        #[br(count=len/8)]
+        val: Vec<f64>,
+    },
+    #[br(magic = 5i32)]
     #[pyo3(transparent)]
-    IntegerArray(Vec<i32>),
+    IntegerArray {
+        #[br(temp)]
+        len: i32,
+        #[br(count=len/4)]
+        val: Vec<i32>,
+    },
 }
 
 impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
 
+#[binread]
+#[br(little)]
 #[derive(Debug, Clone)]
 pub struct Property {
+    #[br(temp)]
+    property_name_len: i32,
+    #[br(little, count=property_name_len, try_map=|x: Vec<u8>| String::from_utf8(x))]
     pub property_name: String,
     pub property_value: PropertyValue,
 }
 
-#[derive(Debug, Clone)]
+#[binread]
+#[br(little)]
 #[gen_stub_pyclass]
 #[pyclass]
+#[derive(Debug, Clone)]
 pub struct XIMProperties {
+    #[br(temp)]
+    num_properties: i32,
+    #[br(count=num_properties, map=|val: Vec<Property>| HashMap::from_iter(val.into_iter().map(|x| (x.property_name, x.property_value) )))]
     pub properties: HashMap<String, PropertyValue>,
 }
 
@@ -451,95 +473,16 @@ impl PixelDataSupported {
         Ok(compressed_arr)
     }
 }
+
 impl XIMHistogram {
-    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
-        let number_of_bins = read_i32_as_usize(&mut reader, Error::InvalidHistogram)?;
-
-        let histogram = read_i32_into_vec(&mut reader, number_of_bins)?;
-        Ok(Self { histogram })
-    }
-}
-
-impl Property {
-    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
-        let property_name_length = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
-
-        let property_name = {
-            let mut buf = vec![0u8; property_name_length];
-            let _ = reader.read_exact(&mut buf)?;
-            String::from_utf8(buf)?
-        };
-
-        let property_type = {
-            let val = reader.read_i32::<LE>()?;
-            match val {
-                0 => PropertyType::Integer,
-                1 => PropertyType::Double,
-                2 => PropertyType::String,
-                4 => PropertyType::DoubleArray,
-                5 => PropertyType::IntegerArray,
-                _ => todo!(),
-            }
-        };
-
-        let property_value = match property_type {
-            PropertyType::Integer => {
-                let value = reader.read_i32::<LE>()?;
-                PropertyValue::Integer(value)
-            }
-            PropertyType::Double => {
-                let value = reader.read_f64::<LE>()?;
-                PropertyValue::Double(value)
-            }
-            PropertyType::String => {
-                let value_len = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
-
-                let mut value = vec![0u8; value_len];
-                reader.read_exact(&mut value)?;
-                let value = String::from_utf8(value)?;
-                PropertyValue::String(value)
-            }
-            PropertyType::DoubleArray => {
-                let value_len = {
-                    let len_bytes = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
-                    len_bytes.checked_div(8).ok_or(Error::InvalidProperty)?
-                };
-
-                let mut value = vec![0f64; value_len];
-                let _ = reader.read_f64_into::<LE>(&mut value)?;
-                PropertyValue::DoubleArray(value)
-            }
-            PropertyType::IntegerArray => {
-                let value_len = {
-                    let len_bytes = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
-                    len_bytes.checked_div(4).ok_or(Error::InvalidProperty)?
-                };
-
-                let mut value = vec![0i32; value_len];
-                let _ = reader.read_i32_into::<LE>(&mut value)?;
-
-                PropertyValue::IntegerArray(value)
-            }
-        };
-
-        Ok(Self {
-            property_name,
-            property_value,
-        })
+    pub fn from_reader<R: Read + Seek>(mut reader: R) -> Result<Self> {
+        Ok(Self::read_le(&mut reader)?)
     }
 }
 
 impl XIMProperties {
-    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
-        let num_properties = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
-
-        let mut properties = HashMap::with_capacity(num_properties);
-
-        for _ in 0..num_properties {
-            let property = Property::from_reader(&mut reader)?;
-            properties.insert(property.property_name, property.property_value);
-        }
-        Ok(Self { properties })
+    pub fn from_reader<R: Read + Seek>(mut reader: R) -> Result<Self> {
+        Ok(Self::read_le(&mut reader)?)
     }
 }
 

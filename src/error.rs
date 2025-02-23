@@ -73,7 +73,7 @@ impl From<binrw::Error> for Error {
                 pos,
                 variant_errors,
             } => todo!(),
-            binrw::Error::Backtrace(backtrace) => todo!(),
+            binrw::Error::Backtrace(backtrace) => Error::InvalidOther(backtrace.to_string()),
             _ => todo!(),
         }
     }
@@ -97,7 +97,7 @@ impl From<Error> for PyErr {
             Error::InvalidHeight => PyValueError::new_err("Invalid height for image"),
             Error::InvalidPixelBufferSize => PyValueError::new_err("Invalid pixel buffer size."),
             Error::InvalidLookupTableSize => PyValueError::new_err("Invalid lookup table size"),
-            Error::InvalidOther(_) => PyValueError::new_err("Unknown error"),
+            Error::InvalidOther(val) => PyValueError::new_err(format!("Unknown error: {}", val)),
         }
     }
 }
