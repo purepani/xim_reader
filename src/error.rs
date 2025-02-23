@@ -1,6 +1,6 @@
 use ndarray::ShapeError;
-use pyo3::exceptions::PyValueError;
 use pyo3::PyErr;
+use pyo3::exceptions::PyValueError;
 use std::fmt::Display;
 use std::string::FromUtf8Error;
 

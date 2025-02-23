@@ -1,7 +1,7 @@
 use byteorder::ByteOrder;
 use numpy::PyArray2;
 use numpy::PyArrayMethods;
-use pyo3::{prelude::Bound, pyclass, pymethods, IntoPyObject, PyResult};
+use pyo3::{IntoPyObject, PyResult, prelude::Bound, pyclass, pymethods};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::impl_stub_type;
 use std::collections::HashMap;
@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::error::{Error, Result};
-use byteorder::{ReadBytesExt, LE};
+use byteorder::{LE, ReadBytesExt};
 use ndarray::ArrayViewMut2;
 
 fn read_i32_as_usize(mut reader: impl Read, err: Error) -> Result<usize> {
@@ -242,8 +242,14 @@ impl XIMHeader {
             String::from_utf8(buf.to_vec())?
         };
 
-        let [version, width, height, bits_per_pixel, bytes_per_pixel, compression] =
-            read_i32_into_buf(reader)?;
+        let [
+            version,
+            width,
+            height,
+            bits_per_pixel,
+            bytes_per_pixel,
+            compression,
+        ] = read_i32_into_buf(reader)?;
 
         let is_compressed = match compression {
             0 => Ok(false),
