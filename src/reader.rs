@@ -1,4 +1,10 @@
 use byteorder::ByteOrder;
+
+use binrw::{
+    BinRead, BinWrite, binrw,
+    io::{BufReader, Read, Seek},
+};
+
 use numpy::PyArray2;
 use numpy::PyArrayMethods;
 use pyo3::{IntoPyObject, PyResult, prelude::Bound, pyclass, pymethods};
@@ -6,11 +12,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::impl_stub_type;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::{
-    fs::File,
-    io::{BufReader, Read},
-    path::PathBuf,
-};
+use std::{fs::File, path::PathBuf};
 
 use crate::error::{Error, Result};
 use byteorder::{LE, ReadBytesExt};
@@ -157,23 +159,34 @@ impl XIMImage {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, BinRead)]
 #[gen_stub_pyclass]
 #[pyclass]
+#[br(little)]
 pub struct XIMHeader {
     #[pyo3(get)]
+    #[br(little, try_map=|x: [u8; 8]| String::from_utf8(x.to_vec()))]
     pub identifier: String,
     #[pyo3(get)]
+    #[br(little)]
     pub version: i32,
     #[pyo3(get)]
+    #[br(little)]
     pub width: i32,
     #[pyo3(get)]
+    #[br(little)]
     pub height: i32,
     #[pyo3(get)]
+    #[br(little)]
     pub bits_per_pixel: i32,
     #[pyo3(get)]
+    #[br(little)]
     pub bytes_per_pixel: i32,
-    #[pyo3(get)]
+    #[br(little, try_map=|x: i32| match x {
+        0=>Ok(false),
+        1=>Ok(true),
+        _=> Err(Error::InvalidCompressionIndicator)
+    })]
     pub is_compressed: bool,
 }
 
@@ -235,37 +248,8 @@ pub struct XIMProperties {
 }
 
 impl XIMHeader {
-    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self> {
-        let identifier = {
-            let mut buf = [0u8; 8];
-            reader.read_exact(&mut buf)?;
-            String::from_utf8(buf.to_vec())?
-        };
-
-        let [
-            version,
-            width,
-            height,
-            bits_per_pixel,
-            bytes_per_pixel,
-            compression,
-        ] = read_i32_into_buf(reader)?;
-
-        let is_compressed = match compression {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(Error::InvalidCompressionIndicator),
-        }?;
-
-        Ok(Self {
-            identifier,
-            version,
-            width,
-            height,
-            bits_per_pixel,
-            bytes_per_pixel,
-            is_compressed,
-        })
+    pub fn from_reader<R: Read + Seek>(reader: &mut R) -> Result<Self> {
+        Ok(Self::read(reader)?)
     }
 
     pub fn width(&self) -> Result<usize> {

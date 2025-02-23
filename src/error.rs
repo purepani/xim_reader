@@ -61,6 +61,24 @@ impl From<FromUtf8Error> for Error {
     }
 }
 
+impl From<binrw::Error> for Error {
+    fn from(value: binrw::Error) -> Self {
+        match value {
+            binrw::Error::BadMagic { pos, found } => todo!(),
+            binrw::Error::AssertFail { pos, message } => todo!(),
+            binrw::Error::Io(error) => todo!(),
+            binrw::Error::Custom { pos, err } => todo!(),
+            binrw::Error::NoVariantMatch { pos } => todo!(),
+            binrw::Error::EnumErrors {
+                pos,
+                variant_errors,
+            } => todo!(),
+            binrw::Error::Backtrace(backtrace) => todo!(),
+            _ => todo!(),
+        }
+    }
+}
+
 impl From<Error> for PyErr {
     fn from(value: Error) -> Self {
         match value {
