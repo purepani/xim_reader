@@ -1,7 +1,7 @@
 use byteorder::ByteOrder;
 
 use binrw::{
-    BinRead, BinWrite, binread, binrw,
+    BinRead, args, binread,
     io::{BufReader, Read, Seek},
 };
 
@@ -16,23 +16,10 @@ use std::{fs::File, path::PathBuf};
 
 use crate::error::{Error, Result};
 use byteorder::{LE, ReadBytesExt};
-use ndarray::ArrayViewMut2;
 
 fn read_i32_as_usize(mut reader: impl Read, err: Error) -> Result<usize> {
     let val = reader.read_i32::<LE>()?;
     usize::try_from(val).map_err(|_err| err)
-}
-
-fn read_i32_into_buf<const N: usize>(mut reader: impl Read) -> Result<[i32; N]> {
-    let mut values = [0i32; N];
-    let _ = reader.read_i32_into::<LE>(&mut values)?;
-    Ok(values)
-}
-
-fn read_i32_into_vec(mut reader: impl Read, n: usize) -> Result<Vec<i32>> {
-    let mut values = vec![0i32; n];
-    let _ = reader.read_i32_into::<LE>(&mut values)?;
-    Ok(values)
 }
 
 trait ReadFromReader<I> {
@@ -185,6 +172,43 @@ pub struct XIMHeader {
     pub is_compressed: bool,
 }
 
+fn parse_lookup(width: usize, height: usize) -> impl Fn(Vec<u8>) -> Vec<u8> {
+    move |lookup_table: Vec<u8>| -> Vec<u8> {
+        let num_bytes_table = lookup_table
+            .into_iter()
+            .flat_map(|vals| {
+                vec![
+                    (vals & 0b00000011),
+                    (vals & 0b00001100) >> 2,
+                    (vals & 0b00110000) >> 4,
+                    (vals & 0b11000000) >> 6,
+                ]
+            })
+            .map(|val| 1u8 << val)
+            .collect::<Vec<u8>>();
+        [vec![4u8; width + 1], num_bytes_table]
+            .concat()
+            .into_iter()
+            .take(width * height)
+            .collect()
+    }
+}
+
+#[binread]
+#[br(little, import{width: usize, height: usize})]
+#[derive(Debug, Clone)]
+pub struct CompressedPixelBuffer {
+    #[br(temp)]
+    lookup_table_len: i32,
+    #[br(count=lookup_table_len, map=parse_lookup(width, height))]
+    pub lookup_table: Vec<u8>,
+    #[br(temp)]
+    compressed_pixel_buffer_len: i32,
+    #[br(count=compressed_pixel_buffer_len)]
+    pub compressed_pixel_buffer: Vec<u8>,
+    _uncompressed_pixel_buffer_len: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct PixelData<I>(ndarray::Array2<I>);
 
@@ -321,22 +345,6 @@ impl PixelDataSupported {
         }
     }
 
-    pub fn parse_lookup(lookup_table: Vec<u8>) -> Vec<u8> {
-        let num_bytes_table = lookup_table
-            .into_iter()
-            .flat_map(|vals| {
-                vec![
-                    (vals & 0b00000011),
-                    (vals & 0b00001100) >> 2,
-                    (vals & 0b00110000) >> 4,
-                    (vals & 0b11000000) >> 6,
-                ]
-            })
-            .map(|val| 1u8 << val)
-            .collect::<Vec<u8>>();
-        num_bytes_table
-    }
-
     fn decompress_array<I>(
         compressed_pixel_buffer: Vec<u8>,
         num_bytes_table: impl Iterator<Item = u8>,
@@ -353,19 +361,10 @@ impl PixelDataSupported {
             + num_traits::WrappingAdd
             + num_traits::WrappingSub,
     {
-        let (mut uncompressed_buffer, mut compressed_diffs) = compressed_pixel_buffer
-            .split_at_checked((width + 1) * 4)
-            .ok_or(Error::InvalidPixels)?;
+        let lookup_table = num_bytes_table;
+        let mut compressed_diffs = compressed_pixel_buffer.as_slice();
 
-        let initial_uncompressed = {
-            let initial_uncompressed = read_i32_into_vec(&mut uncompressed_buffer, width + 1)?;
-            initial_uncompressed
-                .into_iter()
-                .map(|val| I::try_from(val).map_err(|_err| Error::InvalidPixels))
-                .collect::<Result<Vec<I>>>()?
-        };
-
-        let differences = num_bytes_table
+        let differences = lookup_table
             .map(|num_bytes| match num_bytes {
                 1 => compressed_diffs
                     .read_i8()
@@ -384,42 +383,29 @@ impl PixelDataSupported {
             .collect::<Result<Vec<I>>>()?;
 
         let array = {
-            let uncompressed_data = [initial_uncompressed, differences].concat();
-            let mut array = ndarray::Array2::from_shape_vec((height, width), uncompressed_data)?;
-            Self::decompress_diffs(array.view_mut())?;
+            let uncompressed_data = differences;
+            let uncompressed_data = Self::decompress_diffs(uncompressed_data, width)?;
+            let array = ndarray::Array2::from_shape_vec((height, width), uncompressed_data)?;
             array
         };
 
         Ok(PixelData::new(array))
     }
 
-    pub fn from_compressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self> {
+    pub fn from_compressed<R: Read + Seek>(mut reader: R, header: &XIMHeader) -> Result<Self> {
         let width = header.width()?;
         let height = header.height()?;
 
-        let lookup_table_size = read_i32_as_usize(&mut reader, Error::InvalidLookupTableSize)?;
+        let compressed_buffer =
+            CompressedPixelBuffer::read_le_args(&mut reader, args! {width, height})?;
 
-        let lookup_table = {
-            let lookup_table: Vec<u8> = {
-                let mut buf = vec![0u8; lookup_table_size];
-                let _ = reader.read_exact(&mut buf)?;
-                buf
-            };
-            let num_bytes_table = Self::parse_lookup(lookup_table);
-            let full_len = num_bytes_table.len();
-            num_bytes_table
-                .into_iter()
-                .take(full_len - (width * (height - 1)) % 4 - 1)
-        };
+        let full_len = compressed_buffer.lookup_table.len();
+        let lookup_table = compressed_buffer
+            .lookup_table
+            .into_iter()
+            .take(full_len - (width * (height - 1)) % 4 - 1);
 
-        let compressed_pixel_buffer_size =
-            read_i32_as_usize(&mut reader, Error::InvalidPixelBufferSize)?;
-
-        let compressed_pixel_buffer = {
-            let mut buf = vec![0; compressed_pixel_buffer_size];
-            let _ = reader.read_exact(&mut buf);
-            buf
-        };
+        let compressed_pixel_buffer = compressed_buffer.compressed_pixel_buffer;
 
         let pixel_data = match header.bytes_per_pixel {
             1 => {
@@ -440,19 +426,14 @@ impl PixelDataSupported {
             _ => todo!(),
         };
 
-        let _uncompressed_buffer_size = reader.read_i32::<LE>()?;
         Ok(pixel_data)
     }
 
-    pub fn decompress_diffs<I>(mut compressed_arr: ArrayViewMut2<I>) -> Result<ArrayViewMut2<I>>
+    pub fn decompress_diffs<I>(mut compressed_arr: Vec<I>, width: usize) -> Result<Vec<I>>
     where
         I: num_traits::WrappingAdd + num_traits::WrappingSub + Copy,
     {
-        let width = compressed_arr.ncols();
-
-        let arr = compressed_arr
-            .as_slice_mut()
-            .ok_or(Error::FailedDecompression)?;
+        let arr = compressed_arr.as_mut_slice();
         let first_index = width + 1;
         for i in first_index..arr.len() {
             let [left, above, upper_left] = (|| {
@@ -493,11 +474,10 @@ mod tests {
     #[test]
     fn test_decompression() {
         let input: [i16; 8] = [4, 3, 10, 1, 10, 30, 20, 40];
-        let mut input_array = ndarray::Array2::from_shape_vec((4, 2), input.to_vec()).unwrap();
-        let calculated_output = PixelDataSupported::decompress_diffs(input_array.view_mut())
+        let input_array = input.to_vec();
+        let calculated_output = PixelDataSupported::decompress_diffs(input_array, 2)
             .expect("Failed to decompress diffs");
-        let output =
-            ndarray::Array2::from_shape_vec((4, 2), vec![4, 3, 10, 10, 27, 57, 94, 164]).unwrap();
+        let output = vec![4, 3, 10, 10, 27, 57, 94, 164];
         assert_eq!(calculated_output, output);
     }
     #[test]
@@ -509,8 +489,9 @@ mod tests {
             .map(|val| val.to_le_bytes().to_vec())
             .collect::<Vec<_>>()
             .concat();
-        let calculated_output = PixelDataSupported::parse_lookup(test);
         let output: Vec<u8> = vec![2, 1, 1, 1, 4, 4, 1, 1, 4, 8, 2, 1, 1, 2, 2, 1, 1, 4, 4, 1];
+        let calculated_output = parse_lookup(1, output.len())(test);
+        let output: Vec<u8> = vec![4, 4, 2, 1, 1, 1, 4, 4, 1, 1, 4, 8, 2, 1, 1, 2, 2, 1, 1, 4];
         assert_eq!(output, calculated_output);
     }
 }

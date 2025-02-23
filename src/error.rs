@@ -64,14 +64,14 @@ impl From<FromUtf8Error> for Error {
 impl From<binrw::Error> for Error {
     fn from(value: binrw::Error) -> Self {
         match value {
-            binrw::Error::BadMagic { pos, found } => todo!(),
-            binrw::Error::AssertFail { pos, message } => todo!(),
-            binrw::Error::Io(error) => todo!(),
-            binrw::Error::Custom { pos, err } => todo!(),
-            binrw::Error::NoVariantMatch { pos } => todo!(),
+            binrw::Error::BadMagic { pos: _, found: _ } => todo!(),
+            binrw::Error::AssertFail { pos: _, message: _ } => todo!(),
+            binrw::Error::Io(_error) => todo!(),
+            binrw::Error::Custom { pos: _, err: _ } => todo!(),
+            binrw::Error::NoVariantMatch { pos: _ } => todo!(),
             binrw::Error::EnumErrors {
-                pos,
-                variant_errors,
+                pos: _,
+                variant_errors: _,
             } => todo!(),
             binrw::Error::Backtrace(backtrace) => Error::InvalidOther(backtrace.to_string()),
             _ => todo!(),
