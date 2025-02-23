@@ -1,4 +1,5 @@
-use pyo3::prelude::*;
+use pyo3::prelude::{pymodule, Bound, PyModule, PyModuleMethods, PyResult};
+mod error;
 mod reader;
 use pyo3_stub_gen::define_stub_info_gatherer;
 

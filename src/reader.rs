@@ -1,53 +1,63 @@
 use byteorder::ByteOrder;
 use numpy::PyArray2;
 use numpy::PyArrayMethods;
-use pyo3::{prelude::Bound, pyclass, pymethods, IntoPyObject};
+use pyo3::{prelude::Bound, pyclass, pymethods, IntoPyObject, PyResult};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::impl_stub_type;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{
-    convert::TryInto,
-    fmt::Display,
     fs::File,
     io::{BufReader, Read},
     path::PathBuf,
-    string::FromUtf8Error,
 };
 
+use crate::error::{Error, Result};
 use byteorder::{ReadBytesExt, LE};
-use ndarray::{ArrayViewMut2, ShapeError};
+use ndarray::ArrayViewMut2;
+
+fn read_i32_as_usize(mut reader: impl Read, err: Error) -> Result<usize> {
+    let val = reader.read_i32::<LE>()?;
+    usize::try_from(val).map_err(|_err| err)
+}
+
+fn read_i32_into_buf<const N: usize>(mut reader: impl Read) -> Result<[i32; N]> {
+    let mut values = [0i32; N];
+    let _ = reader.read_i32_into::<LE>(&mut values)?;
+    Ok(values)
+}
+
+fn read_i32_into_vec(mut reader: impl Read, n: usize) -> Result<Vec<i32>> {
+    let mut values = vec![0i32; n];
+    let _ = reader.read_i32_into::<LE>(&mut values)?;
+    Ok(values)
+}
 
 trait ReadFromReader<I> {
-    type Error;
-    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [I]) -> Result<(), Self::Error>;
+    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [I]) -> Result<()>;
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i8> for R {
-    type Error = std::io::Error;
-    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i8]) -> Result<(), std::io::Error> {
-        self.read_i8_into(dst)
+    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i8]) -> Result<()> {
+        Ok(self.read_i8_into(dst)?)
     }
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i16> for R {
-    type Error = std::io::Error;
-    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i16]) -> Result<(), std::io::Error> {
-        self.read_i16_into::<B>(dst)
+    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i16]) -> Result<()> {
+        Ok(self.read_i16_into::<B>(dst)?)
     }
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i32> for R {
-    type Error = std::io::Error;
-    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i32]) -> Result<(), std::io::Error> {
-        self.read_i32_into::<B>(dst)
+    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i32]) -> Result<()> {
+        Ok(self.read_i32_into::<B>(dst)?)
     }
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i64> for R {
-    type Error = std::io::Error;
-    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i64]) -> Result<(), std::io::Error> {
-        self.read_i64_into::<B>(dst)
+    fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i64]) -> Result<()> {
+        Ok(self.read_i64_into::<B>(dst)?)
     }
 }
 
@@ -79,23 +89,23 @@ pub struct XIMImage {
 #[pymethods]
 impl XIMImage {
     #[new]
-    pub fn new(image_path: PathBuf) -> Self {
-        let file = File::open(image_path).unwrap();
+    pub fn new(image_path: PathBuf) -> PyResult<Self> {
+        let file = File::open(image_path)?;
         let mut reader = BufReader::new(file);
-        let header = XIMHeader::from_reader(&mut reader).unwrap();
+        let header = XIMHeader::from_reader(&mut reader)?;
         let pixel_data = if header.is_compressed {
-            PixelDataSupported::from_compressed(&mut reader, &header).unwrap()
+            PixelDataSupported::from_compressed(&mut reader, &header)?
         } else {
-            PixelDataSupported::from_uncompressed(&mut reader, &header).unwrap()
+            PixelDataSupported::from_uncompressed(&mut reader, &header)?
         };
-        let histogram = XIMHistogram::from_reader(&mut reader).unwrap();
-        let properties = XIMProperties::from_reader(&mut reader).unwrap();
-        Self {
+        let histogram = XIMHistogram::from_reader(&mut reader)?;
+        let properties = XIMProperties::from_reader(&mut reader)?;
+        Ok(Self {
             header,
             pixel_data,
             histogram,
             properties,
-        }
+        })
     }
 
     #[getter]
@@ -225,20 +235,22 @@ pub struct XIMProperties {
 }
 
 impl XIMHeader {
-    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
-        let mut identifier = [0u8; 8];
-        reader.read_exact(&mut identifier)?;
-        let identifier = String::from_utf8(identifier.to_vec())?;
+    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        let identifier = {
+            let mut buf = [0u8; 8];
+            reader.read_exact(&mut buf)?;
+            String::from_utf8(buf.to_vec())?
+        };
 
-        let mut values = [0i32; 6];
-        let _ = reader.read_i32_into::<LE>(&mut values)?;
-        let [version, width, height, bits_per_pixel, bytes_per_pixel, compression] = values;
+        let [version, width, height, bits_per_pixel, bytes_per_pixel, compression] =
+            read_i32_into_buf(reader)?;
 
         let is_compressed = match compression {
             0 => Ok(false),
             1 => Ok(true),
             _ => Err(Error::InvalidCompressionIndicator),
         }?;
+
         Ok(Self {
             identifier,
             version,
@@ -250,11 +262,11 @@ impl XIMHeader {
         })
     }
 
-    pub fn width(&self) -> Result<usize, Error> {
+    pub fn width(&self) -> Result<usize> {
         usize::try_from(self.width).map_err(|_err| Error::InvalidWidth)
     }
 
-    pub fn height(&self) -> Result<usize, Error> {
+    pub fn height(&self) -> Result<usize> {
         usize::try_from(self.height).map_err(|_err| Error::InvalidHeight)
     }
 }
@@ -266,7 +278,7 @@ impl<I> PixelData<I> {
 }
 
 impl PixelDataSupported {
-    fn read_to_arr<I, R>(mut reader: R, width: usize, height: usize) -> Result<PixelData<I>, Error>
+    fn read_to_arr<I, R>(mut reader: R, width: usize, height: usize) -> Result<PixelData<I>>
     where
         I: num_traits::ConstZero + Clone + Copy,
         R: Read + ReadFromReader<I>,
@@ -280,15 +292,14 @@ impl PixelDataSupported {
         Ok(PixelData::new(array))
     }
 
-    pub fn from_uncompressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self, Error> {
+    pub fn from_uncompressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self> {
         let num_bytes = header.bytes_per_pixel;
 
         let width = header.width()?;
         let height = header.height()?;
 
-        let pixel_buffer_size = reader.read_i32::<LE>()?;
-        let _pixel_buffer_size =
-            usize::try_from(pixel_buffer_size).map_err(|_err| Error::InvalidPixelBufferSize)?;
+        let _pixel_buffer_size = read_i32_as_usize(&mut reader, Error::InvalidPixelBufferSize)?;
+
         match num_bytes {
             1 => Self::read_to_arr(&mut reader, width, height).map(Self::Int8),
             2 => Self::read_to_arr(&mut reader, width, height).map(Self::Int16),
@@ -319,7 +330,7 @@ impl PixelDataSupported {
         num_bytes_table: impl Iterator<Item = u8>,
         width: usize,
         height: usize,
-    ) -> Result<PixelData<I>, Error>
+    ) -> Result<PixelData<I>>
     where
         I: num_traits::ConstZero
             + TryFrom<i32>
@@ -334,16 +345,11 @@ impl PixelDataSupported {
             compressed_pixel_buffer.split_at((width + 1) * 4);
 
         let initial_uncompressed = {
-            let mut initial_uncompressed = vec![0i32; width + 1];
-            uncompressed_buffer.read_i32_into::<LE>(&mut initial_uncompressed)?;
+            let initial_uncompressed = read_i32_into_vec(&mut uncompressed_buffer, width + 1)?;
             initial_uncompressed
                 .into_iter()
-                .map(|val| {
-                    I::try_from(val)
-                        .map_err(|_err| Error::InvalidPixels)
-                        .unwrap()
-                })
-                .collect::<Vec<I>>()
+                .map(|val| I::try_from(val).map_err(|_err| Error::InvalidPixels))
+                .collect::<Result<Vec<I>>>()?
         };
 
         let differences = num_bytes_table
@@ -351,53 +357,50 @@ impl PixelDataSupported {
                 1 => compressed_diffs
                     .read_i8()
                     .map_err(|_err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
-                    .unwrap(),
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels)),
                 2 => compressed_diffs
                     .read_i16::<LE>()
                     .map_err(|_err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
-                    .unwrap(),
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels)),
                 4 => compressed_diffs
                     .read_i32::<LE>()
                     .map_err(|_err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
-                    .unwrap(),
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels)),
                 _ => todo!(),
             })
-            .collect::<Vec<I>>();
+            .collect::<Result<Vec<I>>>()?;
 
         let array = {
             let uncompressed_data = [initial_uncompressed, differences].concat();
-            let mut array =
-                ndarray::Array2::from_shape_vec((height, width), uncompressed_data).unwrap();
-            Self::decompress_diffs(array.view_mut());
+            let mut array = ndarray::Array2::from_shape_vec((height, width), uncompressed_data)?;
+            Self::decompress_diffs(array.view_mut())?;
             array
         };
+
         Ok(PixelData::new(array))
     }
 
-    pub fn from_compressed(reader: &mut impl Read, header: &XIMHeader) -> Result<Self, Error> {
+    pub fn from_compressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self> {
         let width = header.width()?;
         let height = header.height()?;
 
-        let lookup_table: Vec<u8> = {
-            let lookup_table_size = reader.read_i32::<LE>()?;
-            let mut buf = vec![0u8; lookup_table_size.try_into().unwrap()];
-            reader.read_exact(&mut buf).unwrap();
-            buf
-        };
-        let compressed_pixel_buffer_size = reader.read_i32::<LE>()?;
-        let compressed_pixel_buffer_size = usize::try_from(compressed_pixel_buffer_size)
-            .map_err(|_err| Error::InvalidPixelBufferSize)?;
+        let lookup_table_size = read_i32_as_usize(&mut reader, Error::InvalidLookupTableSize)?;
 
-        let num_bytes_table = {
+        let lookup_table = {
+            let lookup_table: Vec<u8> = {
+                let mut buf = vec![0u8; lookup_table_size];
+                let _ = reader.read_exact(&mut buf)?;
+                buf
+            };
             let num_bytes_table = Self::parse_lookup(lookup_table);
             let full_len = num_bytes_table.len();
             num_bytes_table
                 .into_iter()
                 .take(full_len - (width * (height - 1)) % 4 - 1)
         };
+
+        let compressed_pixel_buffer_size =
+            read_i32_as_usize(&mut reader, Error::InvalidPixelBufferSize)?;
 
         let compressed_pixel_buffer = {
             let mut buf = vec![0; compressed_pixel_buffer_size];
@@ -407,30 +410,18 @@ impl PixelDataSupported {
 
         let pixel_data = match header.bytes_per_pixel {
             1 => {
-                let arr = Self::decompress_array(
-                    compressed_pixel_buffer,
-                    num_bytes_table,
-                    width,
-                    height,
-                )?;
+                let arr =
+                    Self::decompress_array(compressed_pixel_buffer, lookup_table, width, height)?;
                 PixelDataSupported::Int8(arr)
             }
             2 => {
-                let arr = Self::decompress_array(
-                    compressed_pixel_buffer,
-                    num_bytes_table,
-                    width,
-                    height,
-                )?;
+                let arr =
+                    Self::decompress_array(compressed_pixel_buffer, lookup_table, width, height)?;
                 PixelDataSupported::Int16(arr)
             }
             4 => {
-                let arr = Self::decompress_array(
-                    compressed_pixel_buffer,
-                    num_bytes_table,
-                    width,
-                    height,
-                )?;
+                let arr =
+                    Self::decompress_array(compressed_pixel_buffer, lookup_table, width, height)?;
                 PixelDataSupported::Int32(arr)
             }
             _ => todo!(),
@@ -440,174 +431,102 @@ impl PixelDataSupported {
         Ok(pixel_data)
     }
 
-    pub fn decompress_diffs<I>(mut compressed_arr: ArrayViewMut2<I>) -> ArrayViewMut2<I>
+    pub fn decompress_diffs<I>(mut compressed_arr: ArrayViewMut2<I>) -> Result<ArrayViewMut2<I>>
     where
         I: num_traits::WrappingAdd + num_traits::WrappingSub + Copy,
     {
         let width = compressed_arr.ncols();
 
-        let arr = compressed_arr.as_slice_mut().unwrap();
-
+        let arr = compressed_arr
+            .as_slice_mut()
+            .ok_or(Error::FailedDecompression)?;
         let first_index = width + 1;
         for i in first_index..arr.len() {
-            let left = *arr.get(i - 1).unwrap();
-            let above = *arr.get(i - width).unwrap();
-            let upper_left = *arr.get(i - width - 1).unwrap();
-            let diff = arr.get_mut(i).unwrap();
-            *diff = diff.wrapping_add(&left);
-            *diff = diff.wrapping_add(&above);
-            *diff = diff.wrapping_sub(&upper_left);
+            let [left, above, upper_left] = (|| {
+                Some([
+                    *arr.get(i - 1)?,
+                    *arr.get(i - width)?,
+                    *arr.get(i - width - 1)?,
+                ])
+            })()
+            .ok_or(Error::FailedDecompression)?;
+
+            let diff = arr.get_mut(i).ok_or(Error::FailedDecompression)?;
+            *diff = diff
+                .wrapping_add(&left)
+                .wrapping_add(&above)
+                .wrapping_sub(&upper_left);
         }
-        compressed_arr
+        Ok(compressed_arr)
     }
 }
-
-#[derive(Debug)]
-pub enum Error {
-    InvalidPixels,
-    InvalidHistogram,
-    InvalidCompressionIndicator,
-    InvalidWidth,
-    InvalidHeight,
-    InvalidPixelBufferSize,
-    InvalidOther(String),
-}
-
-impl core::error::Error for Error {}
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::InvalidCompressionIndicator => todo!(),
-            Error::InvalidWidth => todo!(),
-            Error::InvalidHeight => todo!(),
-            Error::InvalidPixelBufferSize => todo!(),
-            Error::InvalidOther(val) => write!(f, "Failed: {}", val),
-            Error::InvalidPixels => todo!(),
-            Error::InvalidHistogram => todo!(),
-        }
-    }
-}
-
-impl From<ShapeError> for Error {
-    fn from(value: ShapeError) -> Self {
-        Self::InvalidOther(value.to_string())
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self {
-        Self::InvalidOther(value.to_string())
-    }
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(value: FromUtf8Error) -> Self {
-        Self::InvalidOther(value.to_string())
-    }
-}
-
 impl XIMHistogram {
-    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
-        let mut number_of_bins = [0u8; 4];
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let number_of_bins = read_i32_as_usize(&mut reader, Error::InvalidHistogram)?;
 
-        reader.read_exact(&mut number_of_bins)?;
-        let number_of_bins = i32::from_le_bytes(number_of_bins);
-
-        let mut histogram = vec![0u8; (number_of_bins * 4).try_into().unwrap()];
-        let _ = reader
-            .read_exact(&mut histogram)
-            .map_err(|_err| Error::InvalidHistogram)?;
-
-        let histogram = histogram
-            .chunks_exact(4)
-            .into_iter()
-            .map(|val| {
-                let mut buf = [0u8; 4];
-                buf.copy_from_slice(val);
-                i32::from_le_bytes(buf)
-            })
-            .collect::<Vec<_>>();
+        let histogram = read_i32_into_vec(&mut reader, number_of_bins)?;
         Ok(Self { histogram })
     }
 }
 
 impl Property {
-    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
-        let mut property_name_length = [0u8; 4];
-        reader.read_exact(&mut property_name_length)?;
-        let property_name_length = i32::from_le_bytes(property_name_length);
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let property_name_length = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
 
-        let mut property_name = vec![0u8; property_name_length.try_into().unwrap()];
-        reader.read_exact(&mut property_name)?;
-        let property_name = String::from_utf8(property_name)?;
+        let property_name = {
+            let mut buf = vec![0u8; property_name_length];
+            let _ = reader.read_exact(&mut buf)?;
+            String::from_utf8(buf)?
+        };
 
-        let mut property_type = [0u8; 4];
-        reader.read_exact(&mut property_type)?;
-        let property_type = i32::from_le_bytes(property_type);
-        let property_type = match property_type {
-            0 => PropertyType::Integer,
-            1 => PropertyType::Double,
-            2 => PropertyType::String,
-            4 => PropertyType::DoubleArray,
-            5 => PropertyType::IntegerArray,
-            _ => todo!(),
+        let property_type = {
+            let val = reader.read_i32::<LE>()?;
+            match val {
+                0 => PropertyType::Integer,
+                1 => PropertyType::Double,
+                2 => PropertyType::String,
+                4 => PropertyType::DoubleArray,
+                5 => PropertyType::IntegerArray,
+                _ => todo!(),
+            }
         };
 
         let property_value = match property_type {
             PropertyType::Integer => {
-                let mut value = [0u8; 4];
-                reader.read_exact(&mut value)?;
-                let value = i32::from_le_bytes(value);
+                let value = reader.read_i32::<LE>()?;
                 PropertyValue::Integer(value)
             }
             PropertyType::Double => {
-                let mut value = [0u8; 8];
-                reader.read_exact(&mut value)?;
-                let value = f64::from_le_bytes(value);
+                let value = reader.read_f64::<LE>()?;
                 PropertyValue::Double(value)
             }
             PropertyType::String => {
-                let mut value_len = [0u8; 4];
-                reader.read_exact(&mut value_len)?;
-                let value_len = i32::from_le_bytes(value_len);
+                let value_len = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
 
-                let mut value = vec![0u8; value_len.try_into().unwrap()];
+                let mut value = vec![0u8; value_len];
                 reader.read_exact(&mut value)?;
-                let value = String::from_utf8(value).unwrap();
+                let value = String::from_utf8(value)?;
                 PropertyValue::String(value)
             }
             PropertyType::DoubleArray => {
-                let mut value_len = [0u8; 4];
-                reader.read_exact(&mut value_len)?;
-                let value_len = i32::from_le_bytes(value_len);
+                let value_len = {
+                    let len_bytes = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
+                    len_bytes.checked_div(8).ok_or(Error::InvalidProperty)?
+                };
 
-                let mut value = vec![0u8; value_len.try_into().unwrap()];
-                reader.read_exact(&mut value)?;
-                let value = value
-                    .chunks_exact(8)
-                    .map(|val| {
-                        let mut buf = [0u8; 8];
-                        buf.copy_from_slice(val);
-                        f64::from_le_bytes(buf)
-                    })
-                    .collect::<Vec<_>>();
+                let mut value = vec![0f64; value_len];
+                let _ = reader.read_f64_into::<LE>(&mut value)?;
                 PropertyValue::DoubleArray(value)
             }
             PropertyType::IntegerArray => {
-                let mut value_len = [0u8; 4];
-                reader.read_exact(&mut value_len)?;
-                let value_len = i32::from_le_bytes(value_len);
+                let value_len = {
+                    let len_bytes = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
+                    len_bytes.checked_div(4).ok_or(Error::InvalidProperty)?
+                };
 
-                let mut value = vec![0u8; value_len.try_into().unwrap()];
-                reader.read_exact(&mut value)?;
-                let value = value
-                    .chunks_exact(4)
-                    .map(|val| {
-                        let mut buf = [0u8; 4];
-                        buf.copy_from_slice(val);
-                        i32::from_le_bytes(buf)
-                    })
-                    .collect::<Vec<_>>();
+                let mut value = vec![0i32; value_len];
+                let _ = reader.read_i32_into::<LE>(&mut value)?;
+
                 PropertyValue::IntegerArray(value)
             }
         };
@@ -620,15 +539,13 @@ impl Property {
 }
 
 impl XIMProperties {
-    pub fn from_reader<R: Read>(reader: &mut R) -> Result<Self, Error> {
-        let num_properties = reader
-            .read_i32::<LE>()
-            .map_err(|err| Error::InvalidOther(err.to_string()))?;
+    pub fn from_reader<R: Read>(mut reader: R) -> Result<Self> {
+        let num_properties = read_i32_as_usize(&mut reader, Error::InvalidProperty)?;
 
-        let mut properties = HashMap::with_capacity(num_properties.try_into().unwrap());
+        let mut properties = HashMap::with_capacity(num_properties);
 
         for _ in 0..num_properties {
-            let property = Property::from_reader(reader)?;
+            let property = Property::from_reader(&mut reader)?;
             properties.insert(property.property_name, property.property_value);
         }
         Ok(Self { properties })
@@ -643,7 +560,8 @@ mod tests {
     fn test_decompression() {
         let input: [i16; 8] = [4, 3, 10, 1, 10, 30, 20, 40];
         let mut input_array = ndarray::Array2::from_shape_vec((4, 2), input.to_vec()).unwrap();
-        let calculated_output = PixelDataSupported::decompress_diffs(input_array.view_mut());
+        let calculated_output = PixelDataSupported::decompress_diffs(input_array.view_mut())
+            .expect("Failed to decompress diffs");
         let output =
             ndarray::Array2::from_shape_vec((4, 2), vec![4, 3, 10, 10, 27, 57, 94, 164]).unwrap();
         assert_eq!(calculated_output, output);
