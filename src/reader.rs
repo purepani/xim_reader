@@ -1,9 +1,8 @@
 use byteorder::ByteOrder;
-use core::num;
 use numpy::PyArray2;
 use numpy::PyArrayMethods;
 use pyo3::{prelude::Bound, pyclass, pymethods, IntoPyObject};
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use pyo3_stub_gen::impl_stub_type;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -22,17 +21,12 @@ use ndarray::{ArrayViewMut2, ShapeError};
 trait ReadFromReader<I> {
     type Error;
     fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [I]) -> Result<(), Self::Error>;
-    fn read_type<B: ByteOrder>(&mut self) -> Result<I, Self::Error>;
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i8> for R {
     type Error = std::io::Error;
     fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i8]) -> Result<(), std::io::Error> {
         self.read_i8_into(dst)
-    }
-
-    fn read_type<B: ByteOrder>(&mut self) -> Result<i8, std::io::Error> {
-        self.read_i8()
     }
 }
 
@@ -41,10 +35,6 @@ impl<R: ReadBytesExt> ReadFromReader<i16> for R {
     fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i16]) -> Result<(), std::io::Error> {
         self.read_i16_into::<B>(dst)
     }
-
-    fn read_type<B: ByteOrder>(&mut self) -> Result<i16, std::io::Error> {
-        self.read_i16::<B>()
-    }
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i32> for R {
@@ -52,20 +42,12 @@ impl<R: ReadBytesExt> ReadFromReader<i32> for R {
     fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i32]) -> Result<(), std::io::Error> {
         self.read_i32_into::<B>(dst)
     }
-
-    fn read_type<B: ByteOrder>(&mut self) -> Result<i32, std::io::Error> {
-        self.read_i32::<B>()
-    }
 }
 
 impl<R: ReadBytesExt> ReadFromReader<i64> for R {
     type Error = std::io::Error;
     fn read_type_into<B: ByteOrder>(&mut self, dst: &mut [i64]) -> Result<(), std::io::Error> {
         self.read_i64_into::<B>(dst)
-    }
-
-    fn read_type<B: ByteOrder>(&mut self) -> Result<i64, std::io::Error> {
-        self.read_i64::<B>()
     }
 }
 
@@ -205,7 +187,7 @@ pub struct XIMHistogram {
 }
 
 #[derive(Debug, Clone)]
-pub enum PropertyType {
+enum PropertyType {
     Integer,
     Double,
     String,
@@ -231,9 +213,7 @@ impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
 
 #[derive(Debug, Clone)]
 pub struct Property {
-    property_name_length: i32,
     pub property_name: String,
-    property_type: PropertyType,
     pub property_value: PropertyValue,
 }
 
@@ -279,11 +259,6 @@ impl XIMHeader {
     }
 }
 
-struct LookupTableSequenceItem {
-    pub key: usize,
-    pub sequence_length: usize,
-}
-
 impl<I> PixelData<I> {
     pub fn new(array: ndarray::Array2<I>) -> Self {
         Self(array)
@@ -296,9 +271,12 @@ impl PixelDataSupported {
         I: num_traits::ConstZero + Clone + Copy,
         R: Read + ReadFromReader<I>,
     {
-        let mut data: Vec<I> = vec![I::ZERO; width * height];
-        ReadFromReader::<I>::read_type_into::<LE>(&mut reader, &mut data);
-        let array = ndarray::Array2::from_shape_vec((width, height), data)?;
+        let array = {
+            let mut data: Vec<I> = vec![I::ZERO; width * height];
+            let _ = ReadFromReader::<I>::read_type_into::<LE>(&mut reader, &mut data)
+                .map_err(|_err| Error::InvalidPixels)?;
+            ndarray::Array2::from_shape_vec((width, height), data)?
+        };
         Ok(PixelData::new(array))
     }
 
@@ -310,7 +288,7 @@ impl PixelDataSupported {
 
         let pixel_buffer_size = reader.read_i32::<LE>()?;
         let _pixel_buffer_size =
-            usize::try_from(pixel_buffer_size).map_err(|err| Error::InvalidPixelBufferSize)?;
+            usize::try_from(pixel_buffer_size).map_err(|_err| Error::InvalidPixelBufferSize)?;
         match num_bytes {
             1 => Self::read_to_arr(&mut reader, width, height).map(Self::Int8),
             2 => Self::read_to_arr(&mut reader, width, height).map(Self::Int16),
@@ -362,7 +340,7 @@ impl PixelDataSupported {
                 .into_iter()
                 .map(|val| {
                     I::try_from(val)
-                        .map_err(|err| Error::InvalidPixels)
+                        .map_err(|_err| Error::InvalidPixels)
                         .unwrap()
                 })
                 .collect::<Vec<I>>()
@@ -372,18 +350,18 @@ impl PixelDataSupported {
             .map(|num_bytes| match num_bytes {
                 1 => compressed_diffs
                     .read_i8()
-                    .map_err(|err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|err| Error::InvalidPixels))
+                    .map_err(|_err| Error::InvalidPixels)
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
                     .unwrap(),
                 2 => compressed_diffs
                     .read_i16::<LE>()
-                    .map_err(|err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|err| Error::InvalidPixels))
+                    .map_err(|_err| Error::InvalidPixels)
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
                     .unwrap(),
                 4 => compressed_diffs
                     .read_i32::<LE>()
-                    .map_err(|err| Error::InvalidPixels)
-                    .and_then(|x| I::try_from(x).map_err(|err| Error::InvalidPixels))
+                    .map_err(|_err| Error::InvalidPixels)
+                    .and_then(|x| I::try_from(x).map_err(|_err| Error::InvalidPixels))
                     .unwrap(),
                 _ => todo!(),
             })
@@ -487,6 +465,7 @@ impl PixelDataSupported {
 #[derive(Debug)]
 pub enum Error {
     InvalidPixels,
+    InvalidHistogram,
     InvalidCompressionIndicator,
     InvalidWidth,
     InvalidHeight,
@@ -504,13 +483,14 @@ impl Display for Error {
             Error::InvalidPixelBufferSize => todo!(),
             Error::InvalidOther(val) => write!(f, "Failed: {}", val),
             Error::InvalidPixels => todo!(),
+            Error::InvalidHistogram => todo!(),
         }
     }
 }
 
 impl From<ShapeError> for Error {
     fn from(value: ShapeError) -> Self {
-        todo!()
+        Self::InvalidOther(value.to_string())
     }
 }
 
@@ -522,7 +502,7 @@ impl From<std::io::Error> for Error {
 
 impl From<FromUtf8Error> for Error {
     fn from(value: FromUtf8Error) -> Self {
-        todo!()
+        Self::InvalidOther(value.to_string())
     }
 }
 
@@ -534,7 +514,9 @@ impl XIMHistogram {
         let number_of_bins = i32::from_le_bytes(number_of_bins);
 
         let mut histogram = vec![0u8; (number_of_bins * 4).try_into().unwrap()];
-        reader.read_exact(&mut histogram);
+        let _ = reader
+            .read_exact(&mut histogram)
+            .map_err(|_err| Error::InvalidHistogram)?;
 
         let histogram = histogram
             .chunks_exact(4)
@@ -631,9 +613,7 @@ impl Property {
         };
 
         Ok(Self {
-            property_name_length,
             property_name,
-            property_type,
             property_value,
         })
     }
