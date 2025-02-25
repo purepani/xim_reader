@@ -12,10 +12,14 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-    "matplotlib>=3.10.0",
     "numpy>=1.20.3, <2.0",
-    "pip>=25.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.0",
     "pylinac>=3.23.2",
 ]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
