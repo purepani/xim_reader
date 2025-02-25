@@ -98,7 +98,7 @@
 	    pkgs.maturin
 
             pkgs.bacon
-            fenix.packages.${system}.stable.toolchain
+	    toolchain
           ];
         };
         default =
