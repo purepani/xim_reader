@@ -347,8 +347,9 @@ impl PixelDataSupported {
             + num_traits::WrappingAdd
             + num_traits::WrappingSub,
     {
-        let (mut uncompressed_buffer, mut compressed_diffs) =
-            compressed_pixel_buffer.split_at((width + 1) * 4);
+        let (mut uncompressed_buffer, mut compressed_diffs) = compressed_pixel_buffer
+            .split_at_checked((width + 1) * 4)
+            .ok_or(Error::InvalidPixels)?;
 
         let initial_uncompressed = {
             let initial_uncompressed = read_i32_into_vec(&mut uncompressed_buffer, width + 1)?;
