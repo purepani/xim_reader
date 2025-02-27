@@ -182,6 +182,8 @@ jobs:
       contents: write
       # Used to generate artifact attestation
       attestations: write
+    environment:
+      name: pypi
     steps:
       - uses: actions/download-artifact@v4
       - name: Generate artifact attestation
