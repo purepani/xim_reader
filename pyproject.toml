@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "xim_reader_rs"
-version = "0.0.1"
+version = "0.0.2"
 authors = [{name="purepani", email="purepani@pm.me"}]
 description = "Parse the XIM image format from Varian"
 readme = "README.md"
