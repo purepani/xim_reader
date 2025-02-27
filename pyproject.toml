@@ -3,7 +3,7 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "xim_reader"
+name = "xim_reader_rs"
 version = "0.0.1"
 authors = [{name="purepani", email="purepani@pm.me"}]
 description = "Parse the XIM image format from Varian"
