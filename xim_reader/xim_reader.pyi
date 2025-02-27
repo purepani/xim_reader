@@ -14,7 +14,6 @@ class XIMHeader:
     height: builtins.int
     bits_per_pixel: builtins.int
     bytes_per_pixel: builtins.int
-    is_compressed: builtins.bool
 
 class XIMHistogram:
     histogram: builtins.list[builtins.int]

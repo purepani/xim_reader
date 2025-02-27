@@ -8,7 +8,6 @@ fn xim_reader(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = m.add_class::<reader::XIMImage>();
     let _ = m.add_class::<reader::XIMHeader>();
     let _ = m.add_class::<reader::XIMHistogram>();
-    let _ = m.add_class::<reader::XIMProperties>();
     Ok(())
 }
 
