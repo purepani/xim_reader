@@ -5,6 +5,11 @@ build-backend = "maturin"
 [project]
 name = "xim_reader"
 version = "0.0.1"
+authors = [{name="purepani", email="purepani@pm.me"}]
+description = "Parse the XIM image format from Varian"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICEN[CS]E"]
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",
@@ -14,6 +19,9 @@ classifiers = [
 dependencies = [
     "numpy>=1.20.3, <2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/purepani/xim_reader"
 
 [dependency-groups]
 dev = [
