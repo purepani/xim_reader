@@ -221,13 +221,8 @@ struct CompressedPixelBuffer {
 
 impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
 
-#[gen_stub_pymethods]
-#[pymethods]
 impl XIMImage {
-    #[new]
-    pub fn new(image_path: PathBuf) -> PyResult<Self> {
-        let file = File::open(image_path)?;
-        let mut reader = BufReader::new(file);
+    pub fn from_reader<R: Read + Seek>(mut reader: R) -> Result<Self> {
         let header = XIMHeader::from_reader(&mut reader)?;
         let pixel_data = if header.is_compressed {
             PixelDataSupported::from_compressed(&mut reader, &header)?
@@ -242,6 +237,17 @@ impl XIMImage {
             histogram,
             properties,
         })
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl XIMImage {
+    #[new]
+    pub fn new(image_path: PathBuf) -> PyResult<Self> {
+        let file = File::open(image_path)?;
+        let reader = BufReader::new(file);
+        Ok(Self::from_reader(reader)?)
     }
 
     #[getter]
