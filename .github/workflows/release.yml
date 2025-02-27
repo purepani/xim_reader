@@ -37,11 +37,11 @@ jobs:
           - runner: ubuntu-22.04
             target: ppc64le
         toolchain: 
-          - stable
-          - beta
+          - dist: stable
+          - dist: beta
     steps:
       - uses: actions/checkout@v4
-      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
+      - run: rustup update ${{matrix.toolchain.dist}} && rustup default ${{matrix.toolchain.dist}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -49,7 +49,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
@@ -57,7 +57,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: auto
@@ -81,11 +81,11 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
         toolchain: 
-          - stable
-          - beta
+          - dist: stable
+          - dist: beta
     steps:
       - uses: actions/checkout@v4
-      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
+      - run: rustup update ${{matrix.toolchain.dist}} && rustup default ${{matrix.toolchain.dist}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -93,7 +93,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
@@ -101,7 +101,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
@@ -121,11 +121,11 @@ jobs:
           - runner: windows-latest
             target: x86
         toolchain: 
-          - stable
-          - beta
+          - dist: stable
+          - dist: beta
     steps:
       - uses: actions/checkout@v4
-      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
+      - run: rustup update ${{matrix.toolchain.dist}} && rustup default ${{matrix.toolchain.dist}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -134,14 +134,14 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
@@ -160,11 +160,11 @@ jobs:
           - runner: macos-14
             target: aarch64
         toolchain: 
-          - stable
-          - beta
+          - dist: stable
+          - dist: beta
     steps:
       - uses: actions/checkout@v4
-      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
+      - run: rustup update ${{matrix.toolchain.dist}} && rustup default ${{matrix.toolchain.dist}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -172,14 +172,14 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Build free-threaded wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --release --out dist -i python3.13t
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Upload wheels
@@ -192,17 +192,17 @@ jobs:
     strategy:
       matrix:
         toolchain: 
-          - stable
-          - beta
+          - dist: stable
+          - dist: beta
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build sdist
-      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
+      - run: rustup update ${{matrix.toolchain.dist}} && rustup default ${{matrix.toolchain.dist}}
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
-          rust-toolchain: ${{matrix.toolchain}}
+          rust-toolchain: ${{matrix.toolchain.dist}}
           args: --out dist
       - name: Upload sdist
         uses: actions/upload-artifact@v4
