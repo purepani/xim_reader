@@ -50,6 +50,38 @@ impl<R: ReadBytesExt> ReadFromReader<i64> for R {
     }
 }
 
+fn parse_lookup(width: usize, height: usize) -> impl Fn(Vec<u8>) -> Vec<u8> {
+    move |lookup_table: Vec<u8>| -> Vec<u8> {
+        let num_bytes_table = lookup_table
+            .into_iter()
+            .flat_map(|vals| {
+                vec![
+                    (vals & 0b00000011),
+                    (vals & 0b00001100) >> 2,
+                    (vals & 0b00110000) >> 4,
+                    (vals & 0b11000000) >> 6,
+                ]
+            })
+            .map(|val| 1u8 << val)
+            .collect::<Vec<u8>>();
+        [vec![4u8; width + 1], num_bytes_table]
+            .concat()
+            .into_iter()
+            .take(width * height)
+            .collect()
+    }
+}
+
+#[gen_stub_pyclass]
+#[pyclass]
+pub struct XIMImage {
+    #[pyo3(get)]
+    pub header: XIMHeader,
+    pixel_data: PixelDataSupported,
+    pub histogram: XIMHistogram,
+    pub properties: XIMProperties,
+}
+
 #[derive(IntoPyObject)]
 pub enum XIMArray<'py> {
     #[pyo3(transparent)]
@@ -64,15 +96,130 @@ pub enum XIMArray<'py> {
 
 impl_stub_type!(XIMArray<'_> = PyArray2<i8> | PyArray2<i16> |PyArray2<i32> |PyArray2<i64>);
 
+#[derive(Debug, Clone, BinRead)]
 #[gen_stub_pyclass]
 #[pyclass]
-pub struct XIMImage {
+#[br(little)]
+pub struct XIMHeader {
     #[pyo3(get)]
-    pub header: XIMHeader,
-    pixel_data: PixelDataSupported,
-    pub histogram: XIMHistogram,
-    pub properties: XIMProperties,
+    #[br(little, try_map=|x: [u8; 8]| String::from_utf8(x.to_vec()))]
+    pub identifier: String,
+    #[pyo3(get)]
+    pub version: i32,
+    #[pyo3(get)]
+    pub width: i32,
+    #[pyo3(get)]
+    pub height: i32,
+    #[pyo3(get)]
+    pub bits_per_pixel: i32,
+    #[pyo3(get)]
+    pub bytes_per_pixel: i32,
+    #[br(little, try_map=|x: i32| match x {
+        0=>Ok(false),
+        1=>Ok(true),
+        _=> Err(Error::InvalidCompressionIndicator)
+    })]
+    pub is_compressed: bool,
 }
+
+#[derive(Debug, Clone)]
+pub enum PixelDataSupported {
+    Int8(PixelData<i8>),
+    Int16(PixelData<i16>),
+    Int32(PixelData<i32>),
+    Int64(PixelData<i64>),
+}
+
+#[derive(Debug, Clone)]
+pub struct PixelData<I>(ndarray::Array2<I>);
+
+#[binread]
+#[derive(Debug, Clone)]
+#[gen_stub_pyclass]
+#[pyclass]
+pub struct XIMHistogram {
+    #[br(temp)]
+    bins: i32,
+    #[br(count=bins)]
+    #[pyo3(get)]
+    pub histogram: Vec<i32>,
+}
+
+#[binread]
+#[br(little)]
+#[gen_stub_pyclass]
+#[pyclass]
+#[derive(Debug, Clone)]
+pub struct XIMProperties {
+    #[br(temp)]
+    num_properties: i32,
+    #[br(count=num_properties, map=|val: Vec<Property>| HashMap::from_iter(val.into_iter().map(|x| (x.property_name, x.property_value) )))]
+    pub properties: HashMap<String, PropertyValue>,
+}
+
+#[binread]
+#[br(little)]
+#[derive(Debug, Clone)]
+pub struct Property {
+    #[br(temp)]
+    property_name_len: i32,
+    #[br(little, count=property_name_len, try_map=|x: Vec<u8>| String::from_utf8(x))]
+    pub property_name: String,
+    pub property_value: PropertyValue,
+}
+
+#[binread]
+#[br(little)]
+#[derive(Debug, Clone, IntoPyObject)]
+pub enum PropertyValue {
+    #[br(magic = 0i32)]
+    #[pyo3(transparent)]
+    Integer(i32),
+    #[br(magic = 1i32)]
+    #[pyo3(transparent)]
+    Double(f64),
+    #[br(magic = 2i32)]
+    #[pyo3(transparent)]
+    String {
+        #[br(temp)]
+        len: i32,
+        #[br(little, count=len, try_map=|x: Vec<u8>| String::from_utf8(x))]
+        val: String,
+    },
+    #[br(magic = 4i32)]
+    #[pyo3(transparent)]
+    DoubleArray {
+        #[br(temp)]
+        len: i32,
+        #[br(count=len/8)]
+        val: Vec<f64>,
+    },
+    #[br(magic = 5i32)]
+    #[pyo3(transparent)]
+    IntegerArray {
+        #[br(temp)]
+        len: i32,
+        #[br(count=len/4)]
+        val: Vec<i32>,
+    },
+}
+
+#[binread]
+#[br(little, import{width: usize, height: usize})]
+#[derive(Debug, Clone)]
+struct CompressedPixelBuffer {
+    #[br(temp)]
+    lookup_table_len: i32,
+    #[br(count=lookup_table_len, map=parse_lookup(width, height))]
+    pub lookup_table: Vec<u8>,
+    #[br(temp)]
+    compressed_pixel_buffer_len: i32,
+    #[br(count=compressed_pixel_buffer_len)]
+    pub compressed_pixel_buffer: Vec<u8>,
+    _uncompressed_pixel_buffer_len: i32,
+}
+
+impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -146,153 +293,6 @@ impl XIMImage {
     }
 }
 
-#[derive(Debug, Clone, BinRead)]
-#[gen_stub_pyclass]
-#[pyclass]
-#[br(little)]
-pub struct XIMHeader {
-    #[pyo3(get)]
-    #[br(little, try_map=|x: [u8; 8]| String::from_utf8(x.to_vec()))]
-    pub identifier: String,
-    #[pyo3(get)]
-    pub version: i32,
-    #[pyo3(get)]
-    pub width: i32,
-    #[pyo3(get)]
-    pub height: i32,
-    #[pyo3(get)]
-    pub bits_per_pixel: i32,
-    #[pyo3(get)]
-    pub bytes_per_pixel: i32,
-    #[br(little, try_map=|x: i32| match x {
-        0=>Ok(false),
-        1=>Ok(true),
-        _=> Err(Error::InvalidCompressionIndicator)
-    })]
-    pub is_compressed: bool,
-}
-
-fn parse_lookup(width: usize, height: usize) -> impl Fn(Vec<u8>) -> Vec<u8> {
-    move |lookup_table: Vec<u8>| -> Vec<u8> {
-        let num_bytes_table = lookup_table
-            .into_iter()
-            .flat_map(|vals| {
-                vec![
-                    (vals & 0b00000011),
-                    (vals & 0b00001100) >> 2,
-                    (vals & 0b00110000) >> 4,
-                    (vals & 0b11000000) >> 6,
-                ]
-            })
-            .map(|val| 1u8 << val)
-            .collect::<Vec<u8>>();
-        [vec![4u8; width + 1], num_bytes_table]
-            .concat()
-            .into_iter()
-            .take(width * height)
-            .collect()
-    }
-}
-
-#[binread]
-#[br(little, import{width: usize, height: usize})]
-#[derive(Debug, Clone)]
-pub struct CompressedPixelBuffer {
-    #[br(temp)]
-    lookup_table_len: i32,
-    #[br(count=lookup_table_len, map=parse_lookup(width, height))]
-    pub lookup_table: Vec<u8>,
-    #[br(temp)]
-    compressed_pixel_buffer_len: i32,
-    #[br(count=compressed_pixel_buffer_len)]
-    pub compressed_pixel_buffer: Vec<u8>,
-    _uncompressed_pixel_buffer_len: i32,
-}
-
-#[derive(Debug, Clone)]
-pub struct PixelData<I>(ndarray::Array2<I>);
-
-#[derive(Debug, Clone)]
-pub enum PixelDataSupported {
-    Int8(PixelData<i8>),
-    Int16(PixelData<i16>),
-    Int32(PixelData<i32>),
-    Int64(PixelData<i64>),
-}
-
-#[binread]
-#[derive(Debug, Clone)]
-#[gen_stub_pyclass]
-#[pyclass]
-pub struct XIMHistogram {
-    #[br(temp)]
-    bins: i32,
-    #[br(count=bins)]
-    #[pyo3(get)]
-    pub histogram: Vec<i32>,
-}
-
-#[binread]
-#[br(little)]
-#[derive(Debug, Clone, IntoPyObject)]
-pub enum PropertyValue {
-    #[br(magic = 0i32)]
-    #[pyo3(transparent)]
-    Integer(i32),
-    #[br(magic = 1i32)]
-    #[pyo3(transparent)]
-    Double(f64),
-    #[br(magic = 2i32)]
-    #[pyo3(transparent)]
-    String {
-        #[br(temp)]
-        len: i32,
-        #[br(little, count=len, try_map=|x: Vec<u8>| String::from_utf8(x))]
-        val: String,
-    },
-    #[br(magic = 4i32)]
-    #[pyo3(transparent)]
-    DoubleArray {
-        #[br(temp)]
-        len: i32,
-        #[br(count=len/8)]
-        val: Vec<f64>,
-    },
-    #[br(magic = 5i32)]
-    #[pyo3(transparent)]
-    IntegerArray {
-        #[br(temp)]
-        len: i32,
-        #[br(count=len/4)]
-        val: Vec<i32>,
-    },
-}
-
-impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
-
-#[binread]
-#[br(little)]
-#[derive(Debug, Clone)]
-pub struct Property {
-    #[br(temp)]
-    property_name_len: i32,
-    #[br(little, count=property_name_len, try_map=|x: Vec<u8>| String::from_utf8(x))]
-    pub property_name: String,
-    pub property_value: PropertyValue,
-}
-
-#[binread]
-#[br(little)]
-#[gen_stub_pyclass]
-#[pyclass]
-#[derive(Debug, Clone)]
-pub struct XIMProperties {
-    #[br(temp)]
-    num_properties: i32,
-    #[br(count=num_properties, map=|val: Vec<Property>| HashMap::from_iter(val.into_iter().map(|x| (x.property_name, x.property_value) )))]
-    pub properties: HashMap<String, PropertyValue>,
-}
-
 impl XIMHeader {
     pub fn from_reader<R: Read + Seek>(reader: &mut R) -> Result<Self> {
         Ok(Self::read(reader)?)
@@ -328,7 +328,7 @@ impl PixelDataSupported {
         Ok(PixelData::new(array))
     }
 
-    pub fn from_uncompressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self> {
+    fn from_uncompressed(mut reader: impl Read, header: &XIMHeader) -> Result<Self> {
         let num_bytes = header.bytes_per_pixel;
 
         let width = header.width()?;
@@ -392,7 +392,7 @@ impl PixelDataSupported {
         Ok(PixelData::new(array))
     }
 
-    pub fn from_compressed<R: Read + Seek>(mut reader: R, header: &XIMHeader) -> Result<Self> {
+    fn from_compressed<R: Read + Seek>(mut reader: R, header: &XIMHeader) -> Result<Self> {
         let width = header.width()?;
         let height = header.height()?;
 
@@ -429,7 +429,7 @@ impl PixelDataSupported {
         Ok(pixel_data)
     }
 
-    pub fn decompress_diffs<I>(mut compressed_arr: Vec<I>, width: usize) -> Result<Vec<I>>
+    fn decompress_diffs<I>(mut compressed_arr: Vec<I>, width: usize) -> Result<Vec<I>>
     where
         I: num_traits::WrappingAdd + num_traits::WrappingSub + Copy,
     {
