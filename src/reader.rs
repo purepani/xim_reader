@@ -72,6 +72,7 @@ fn parse_lookup(width: usize, height: usize) -> impl Fn(Vec<u8>) -> Vec<u8> {
     }
 }
 
+/// Main struct for reading XIM images.
 #[gen_stub_pyclass]
 #[pyclass]
 pub struct XIMImage {
@@ -96,6 +97,7 @@ pub enum XIMArray<'py> {
 
 impl_stub_type!(XIMArray<'_> = PyArray2<i8> | PyArray2<i16> | PyArray2<i32> | PyArray2<i64>);
 
+/// Represents XIM Header
 #[derive(Debug, Clone, BinRead)]
 #[gen_stub_pyclass]
 #[pyclass]
@@ -222,6 +224,7 @@ struct CompressedPixelBuffer {
 impl_stub_type!(PropertyValue = i32 | f64 | String | Vec<f64> | Vec<i32>);
 
 impl XIMImage {
+    /// Constructor for XIMImage. Must implement Read and Seek.
     pub fn from_reader<R: Read + Seek>(mut reader: R) -> Result<Self> {
         let header = XIMHeader::from_reader(&mut reader)?;
         let pixel_data = if header.is_compressed {
@@ -243,6 +246,7 @@ impl XIMImage {
 #[gen_stub_pymethods]
 #[pymethods]
 impl XIMImage {
+    /// Create XIMImage from path
     #[new]
     pub fn new(image_path: PathBuf) -> PyResult<Self> {
         let file = File::open(image_path)?;
@@ -250,6 +254,7 @@ impl XIMImage {
         Ok(Self::from_reader(reader)?)
     }
 
+    /// Gets a numpy view of the image array.
     #[getter]
     pub fn numpy<'py>(this: Bound<'py, Self>) -> XIMArray<'py> {
         match &this.borrow().pixel_data {
@@ -288,11 +293,13 @@ impl XIMImage {
         }
     }
 
+    /// Gets a list of histogram values, with the bins increasing with index.
     #[getter]
     pub fn histogram(&self) -> Vec<i32> {
         self.histogram.histogram.clone()
     }
 
+    /// Gets a dictionary of properties from the image.
     #[getter]
     pub fn properties(&self) -> HashMap<String, PropertyValue> {
         self.properties.properties.clone()
@@ -405,11 +412,7 @@ impl PixelDataSupported {
         let compressed_buffer =
             CompressedPixelBuffer::read_le_args(&mut reader, args! {width, height})?;
 
-        let full_len = compressed_buffer.lookup_table.len();
-        let lookup_table = compressed_buffer
-            .lookup_table
-            .into_iter()
-            .take(full_len - (width * (height - 1)) % 4 - 1);
+        let lookup_table = compressed_buffer.lookup_table.into_iter();
 
         let compressed_pixel_buffer = compressed_buffer.compressed_pixel_buffer;
 
