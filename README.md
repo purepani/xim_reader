@@ -5,12 +5,12 @@ This tool is a python extension library to read the XIM image format, written in
 
 If just using `pip`,
 ```bash
-pip install xim_reader
+pip install xim-reader-rs
 
 ```
 I recommend `uv` as a python projection manager, where
 ```bash
-uv add xim_reader
+uv add xim-reader-rs
 ```
 will work.
 
