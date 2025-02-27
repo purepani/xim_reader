@@ -39,7 +39,6 @@ jobs:
         toolchain: 
           - stable
           - beta
-          - nightly
     steps:
       - uses: actions/checkout@v4
       - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
@@ -79,8 +78,12 @@ jobs:
             target: aarch64
           - runner: ubuntu-22.04
             target: armv7
+        toolchain: 
+          - stable
+          - beta
     steps:
       - uses: actions/checkout@v4
+      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -113,8 +116,12 @@ jobs:
             target: x64
           - runner: windows-latest
             target: x86
+        toolchain: 
+          - stable
+          - beta
     steps:
       - uses: actions/checkout@v4
+      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -146,8 +153,12 @@ jobs:
             target: x86_64
           - runner: macos-14
             target: aarch64
+        toolchain: 
+          - stable
+          - beta
     steps:
       - uses: actions/checkout@v4
+      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -170,10 +181,16 @@ jobs:
           path: dist
 
   sdist:
+    strategy:
+      matrix:
+        toolchain: 
+          - stable
+          - beta
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build sdist
+      - run: rustup update ${{matrix.toolchain}} && rustup default ${{matrix.toolchain}}
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
