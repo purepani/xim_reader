@@ -94,7 +94,7 @@ pub enum XIMArray<'py> {
     Int64(Bound<'py, PyArray2<i64>>),
 }
 
-impl_stub_type!(XIMArray<'_> = PyArray2<i8> | PyArray2<i16> |PyArray2<i32> |PyArray2<i64>);
+impl_stub_type!(XIMArray<'_> = PyArray2<i8> | PyArray2<i16> | PyArray2<i32> | PyArray2<i64>);
 
 #[derive(Debug, Clone, BinRead)]
 #[gen_stub_pyclass]
@@ -486,6 +486,7 @@ mod tests {
         let output = vec![4, 3, 10, 10, 27, 57, 94, 164];
         assert_eq!(calculated_output, output);
     }
+
     #[test]
     fn test_parse_lookup() {
         let test: Vec<u8> = vec![1, 10, 30, 20, 40];
